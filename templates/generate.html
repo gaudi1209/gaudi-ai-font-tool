@@ -48,6 +48,35 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+.pua-info {
+    margin-top: 6px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    background: #faf0f0;
+    border: 1px solid #e8c8c8;
+    color: #6a4a4a;
+}
+.pua-info-title {
+    font-weight: 600;
+    color: #8a4a4a;
+    margin-bottom: 4px;
+}
+.pua-info-list {
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.8;
+    word-break: break-all;
+    max-height: 120px;
+    overflow-y: auto;
+}
+.pua-info-list span {
+    display: inline-block;
+    padding: 1px 5px;
+    margin: 1px 2px;
+    background: #f5e0e0;
+    border-radius: 3px;
+}
 </style>
 {% endblock %}
 
@@ -104,6 +133,10 @@
                 <h4 style="font-size:14px;color:#4a4a4a">直接粘贴字符</h4>
                 <textarea id="charInput" placeholder="在此粘贴需要生成的汉字..."></textarea>
                 <div class="char-count" id="charCount">0 个字符</div>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                    <button class="btn btn-secondary" onclick="checkPuaText()" style="font-size:11px;padding:4px 10px">PUA检测</button>
+                    <span id="puaResult0" style="font-size:11px;color:#8a6a6a;line-height:28px"></span>
+                </div>
                 <div class="path-row">
                     <label>输出目录:</label>
                     <input type="text" id="outputDir0" data-persist placeholder="输出目录路径">
@@ -126,6 +159,7 @@
                 </div>
                 <button class="btn btn-secondary" onclick="calcMissing()" style="font-size:12px;padding:6px 12px">计算缺失字符</button>
                 <div id="missingResult1" class="group-info" style="display:none"></div>
+                <div id="puaResult1" class="pua-info" style="display:none"></div>
                 <textarea id="textDisplay1" placeholder="缺失字符将显示在此处..." readonly style="height:120px;font-size:16px;background:#faf8f5"></textarea>
                 <div class="char-count" id="missingCount1">0 个缺失字符</div>
                 <div class="path-row">
@@ -180,6 +214,10 @@
             <div class="tab-content" id="tab3">
                 <h4 style="font-size:14px;color:#4a4a4a">粘贴迭代失败字符</h4>
                 <textarea id="failInput" placeholder="粘贴失败的字符列表..."></textarea>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                    <button class="btn btn-secondary" onclick="checkPuaFail()" style="font-size:11px;padding:4px 10px">PUA检测</button>
+                    <span id="puaResult3" style="font-size:11px;color:#8a6a6a;line-height:28px"></span>
+                </div>
                 <div class="path-row">
                     <label>源目录:</label>
                     <input type="text" id="sourceDir3" data-persist placeholder="之前迭代的输出目录">

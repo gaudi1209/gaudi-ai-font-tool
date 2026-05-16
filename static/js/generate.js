@@ -54,7 +54,87 @@ async function calcMissing() {
             document.getElementById('textDisplay1').value = '';
             document.getElementById('missingCount1').textContent = '0 个缺失字符';
         }
+        // 显示PUA检测结果
+        showPuaResult('puaResult1', data.pua_chars, data.pua_count, data.pua_total);
     } catch (e) { hideLoading(); }
+}
+
+// 显示PUA检测结果
+function showPuaResult(elementId, puaChars, puaCount, puaTotal) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    if (!puaChars || puaChars.length === 0) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'block';
+    const totalStr = puaTotal ? ` (${puaTotal}处)` : '';
+    let html = `<div class="pua-info-title">⚠ PUA私用区字符 ${puaCount}种${totalStr}</div>`;
+    html += '<div class="pua-info-list">';
+    puaChars.forEach(p => {
+        const mapped = p.mapped_char ? ` → <b style="font-family:'SimSun','KaiTi',serif;font-size:14px">${p.mapped_char}</b> (${p.mapped_code})` : '';
+        const sysFonts = p.system_fonts && p.system_fonts.length > 0 ? `<span style="color:#8a7a6a;font-size:9px;margin-left:3px">[${p.system_fonts.join('/')}]</span>` : '';
+        html += `<span title="${p.code}">${p.code} <span style="font-family:'SimSun','KaiTi','Microsoft YaHei',serif;font-size:13px">${p.char}</span>${mapped}${sysFonts}</span>`;
+    });
+    html += '</div>';
+    html += `<div style="margin-top:6px"><button class="btn btn-secondary" onclick="exportPuaResult('${elementId}')" style="font-size:10px;padding:2px 8px">导出列表</button></div>`;
+    el.innerHTML = html;
+}
+
+// 导出PUA检测结果
+function exportPuaResult(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    const spans = el.querySelectorAll('.pua-info-list > span');
+    const lines = Array.from(spans).map(s => {
+        const code = s.getAttribute('title');
+        const text = s.textContent.trim();
+        return `${code}\t${text}`;
+    });
+    const text = `PUA字符列表 (${spans.length}种)\n\nPUA编码\t字符信息\n${'─'.repeat(40)}\n${lines.join('\n')}\n`;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `PUA字符检测_${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    showToast(`已导出 ${spans.length} 个PUA字符`, 'success');
+}
+
+// Tab0: 文本输入PUA检测
+async function checkPuaText() {
+    const text = document.getElementById('charInput').value;
+    if (!text) { showToast('请先输入文本', 'error'); return; }
+    try {
+        const data = await apiRequest('/api/generate/pua_check', { method: 'POST', body: JSON.stringify({ text }) });
+        if (data.pua_count > 0) {
+            const mapped = data.pua_chars.filter(p => p.mapped_char).map(p => `${p.mapped_char}`).join('');
+            const mappedStr = mapped ? `，可识别: ${mapped}` : '';
+            document.getElementById('puaResult0').innerHTML = `⚠ 发现 <b>${data.pua_count}</b> 种PUA字符 (${data.pua_total}处)${mappedStr}`;
+            document.getElementById('puaResult0').style.color = '#8a6a6a';
+        } else {
+            document.getElementById('puaResult0').innerHTML = '✓ 未检测到PUA字符';
+            document.getElementById('puaResult0').style.color = '#6a8a6a';
+        }
+    } catch (e) {}
+}
+
+// Tab3: 失败重试PUA检测
+async function checkPuaFail() {
+    const text = document.getElementById('failInput').value;
+    if (!text) { showToast('请先输入字符', 'error'); return; }
+    try {
+        const data = await apiRequest('/api/generate/pua_check', { method: 'POST', body: JSON.stringify({ text }) });
+        if (data.pua_count > 0) {
+            const mapped = data.pua_chars.filter(p => p.mapped_char).map(p => `${p.mapped_char}`).join('');
+            const mappedStr = mapped ? `，可识别: ${mapped}` : '';
+            document.getElementById('puaResult3').innerHTML = `⚠ 发现 <b>${data.pua_count}</b> 种PUA字符 (${data.pua_total}处)${mappedStr}`;
+            document.getElementById('puaResult3').style.color = '#8a6a6a';
+        } else {
+            document.getElementById('puaResult3').innerHTML = '✓ 未检测到PUA字符';
+            document.getElementById('puaResult3').style.color = '#6a8a6a';
+        }
+    } catch (e) {}
 }
 
 async function calcDiffGroups() {

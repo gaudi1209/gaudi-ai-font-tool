@@ -141,6 +141,55 @@ def generate_status():
     return jsonify(generate_manager.get_status())
 
 
+def _check_pua_system_fonts(pua_codes):
+    """检查系统字体对PUA字符的支持，尝试从字形名推断标准Unicode映射"""
+    import re
+    from fontTools.ttLib import TTFont
+
+    SYSTEM_FONTS = [
+        ('宋体', 'C:\\Windows\\Fonts\\simsun.ttc', 0),
+        ('楷体', 'C:\\Windows\\Fonts\\simkai.ttf', None),
+        ('仿宋', 'C:\\Windows\\Fonts\\simfang.ttf', None),
+        ('微软雅黑', 'C:\\Windows\\Fonts\\msyh.ttc', 0),
+        ('明體', 'C:\\Windows\\Fonts\\mingliu.ttc', 0),
+    ]
+
+    results = {}
+    for name, path, fnum in SYSTEM_FONTS:
+        if not os.path.isfile(path):
+            continue
+        try:
+            kw = {'fontNumber': fnum} if fnum is not None else {}
+            font = TTFont(path, **kw)
+            cmap = font.getBestCmap()
+            font.close()
+        except Exception:
+            continue
+
+        for cp in pua_codes:
+            if cp not in cmap:
+                continue
+            glyph_name = cmap[cp]
+            if cp not in results:
+                results[cp] = {'fonts': [], 'mapped': None, 'mapped_code': None}
+            results[cp]['fonts'].append(name)
+
+            # 尝试从字形名推断标准Unicode (如 uni7D2C → U+7D2C 紬)
+            if results[cp]['mapped'] is None:
+                m = re.match(r'^uni([0-9A-Fa-f]{4,6})$', glyph_name, re.IGNORECASE)
+                if not m:
+                    m = re.match(r'^u([0-9A-Fa-f]{5,6})$', glyph_name, re.IGNORECASE)
+                if m:
+                    mapped = int(m.group(1), 16)
+                    if mapped != cp and not (0xE000 <= mapped <= 0xF8FF):
+                        try:
+                            results[cp]['mapped'] = chr(mapped)
+                            results[cp]['mapped_code'] = f'U+{mapped:04X}'
+                        except Exception:
+                            pass
+    return results
+
+
 @app.route('/api/generate/missing_chars', methods=['POST'])
 def missing_chars():
     """计算TTF相对文本文件或文本内容的缺失字符"""
@@ -205,12 +254,38 @@ def missing_chars():
         font_chars = get_font_chars(ttf_path)
         text_chars = set(ord(c) for c in text if is_cjk(ord(c)))
         missing = sorted(text_chars - font_chars)
+
+        # PUA 字符检测 (U+E000-U+F8FF)
+        pua_map = {}
+        for c in text:
+            cp = ord(c)
+            if 0xE000 <= cp <= 0xF8FF:
+                pua_map[cp] = pua_map.get(cp, 0) + 1
+        pua_sorted = sorted(pua_map.keys())
+
+        # 系统字体检查
+        pua_sys = _check_pua_system_fonts(pua_sorted) if pua_sorted else {}
+        pua_list = []
+        for c in pua_sorted:
+            info = pua_sys.get(c, {'fonts': [], 'mapped': None, 'mapped_code': None})
+            pua_list.append({
+                "code": f"U+{c:04X}",
+                "char": chr(c),
+                "count": pua_map[c],
+                "system_fonts": info['fonts'],
+                "mapped_char": info['mapped'],
+                "mapped_code": info['mapped_code'],
+            })
+
         return jsonify({
             "success": True,
             "missing_chars": [chr(c) for c in missing],
             "missing_count": len(missing),
             "text_total": len(text_chars),
             "font_total": len(font_chars),
+            "pua_chars": pua_list,
+            "pua_count": len(pua_sorted),
+            "pua_total": sum(pua_map.values()),
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
@@ -261,6 +336,81 @@ def diff_groups():
             "missing_count": len(missing),
             "groups": [{"index": i, "size": len(g), "chars": [chr(c) for c in g]} for i, g in enumerate(groups)],
             "export_file": export_file,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
+@app.route('/api/generate/pua_check', methods=['POST'])
+def pua_check():
+    """检测文本中的 PUA 字符 (U+E000-U+F8FF)"""
+    params = request.json
+    text = params.get('text', '')
+    text_file = params.get('text_file', '')
+
+    # 优先读取文本文件
+    if text_file and os.path.isfile(text_file):
+        try:
+            ext = os.path.splitext(text_file)[1].lower()
+            if ext == '.txt':
+                with open(text_file, 'r', encoding='utf-8') as f:
+                    text = f.read()
+            elif ext == '.docx':
+                from docx import Document
+                doc = Document(text_file)
+                text = '\n'.join(p.text for p in doc.paragraphs)
+            elif ext == '.pdf':
+                import fitz
+                doc = fitz.open(text_file)
+                text = ''.join(page.get_text() for page in doc)
+                doc.close()
+            elif ext == '.epub':
+                import zipfile
+                from xml.etree import ElementTree
+                with zipfile.ZipFile(text_file) as zf:
+                    for name in zf.namelist():
+                        if name.endswith(('.html', '.xhtml', '.htm')):
+                            with zf.open(name) as f:
+                                tree = ElementTree.parse(f)
+                                root = tree.getroot()
+                                for elem in root.iter():
+                                    if elem.text:
+                                        text += elem.text + ' '
+            else:
+                return jsonify({"success": False, "error": f"不支持的文件格式: {ext}"})
+        except Exception as e:
+            return jsonify({"success": False, "error": f"读取文件失败: {e}"})
+
+    if not text:
+        return jsonify({"success": False, "error": "请提供文本或文本文件"})
+
+    try:
+        pua_set = {}
+        for c in text:
+            cp = ord(c)
+            if 0xE000 <= cp <= 0xF8FF:
+                pua_set[cp] = pua_set.get(cp, 0) + 1
+        pua_sorted = sorted(pua_set.keys())
+
+        # 系统字体检查
+        pua_sys = _check_pua_system_fonts(pua_sorted) if pua_sorted else {}
+        pua_list = []
+        for c in pua_sorted:
+            info = pua_sys.get(c, {'fonts': [], 'mapped': None, 'mapped_code': None})
+            pua_list.append({
+                "code": f"U+{c:04X}",
+                "char": chr(c),
+                "count": pua_set[c],
+                "system_fonts": info['fonts'],
+                "mapped_char": info['mapped'],
+                "mapped_code": info['mapped_code'],
+            })
+
+        return jsonify({
+            "success": True,
+            "pua_chars": pua_list,
+            "pua_count": len(pua_sorted),
+            "pua_total": sum(pua_set.values()),
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
