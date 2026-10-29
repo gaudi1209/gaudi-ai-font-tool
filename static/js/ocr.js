@@ -29,7 +29,6 @@ async function startOCR() {
         file_filter: document.getElementById('fileFilter').value || '*.png',
         batch_size: parseInt(document.getElementById('batchSize').value) || 50,
         ocr_model: document.getElementById('ocrModel').value,
-        ocr_python: document.getElementById('ocrPython').value,
     };
     try {
         const data = await apiRequest('/api/ocr/start', { method: 'POST', body: JSON.stringify(params) });

@@ -79,6 +79,6 @@ CHARSET_SIZES = {
 REF_CHARS = ['永', '和', '之', '道', '心', '人', '大', '天']
 
 # Flask 配置
-HOST = "0.0.0.0"
+HOST = "127.0.0.1"
 PORT = 7550
-DEBUG = True
+DEBUG = False

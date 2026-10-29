@@ -13,6 +13,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import OCR_PYTHON
 
 
+OCR_MODELS = frozenset({
+    'ch', 'ch_server', 'handwriting', 'chinese_cht', 'en', 'japan', 'korean',
+})
+
+
 class OCRManager:
     def __init__(self):
         self.status = "idle"
@@ -29,13 +34,27 @@ class OCRManager:
         if self.status == "running":
             return {"success": False, "error": "OCR正在运行"}
 
+        if not isinstance(params, dict):
+            return {"success": False, "error": "OCR参数必须是对象"}
+        ocr_model = params.get('ocr_model', 'ch')
+        if not isinstance(ocr_model, str) or ocr_model not in OCR_MODELS:
+            return {"success": False, "error": "不支持的OCR模型"}
+        if 'ocr_python' in params:
+            requested_python = params['ocr_python']
+            if (not isinstance(requested_python, str) or not requested_python or
+                    os.path.normcase(os.path.abspath(requested_python)) !=
+                    os.path.normcase(os.path.abspath(OCR_PYTHON))):
+                return {"success": False, "error": "OCR环境由服务器配置，不允许覆盖"}
+
+        params = dict(params)
+        params.pop('ocr_python', None)
         self._stop_flag = False
         self.status = "running"
         self.error_message = ""
         self.processed_files = 0
         self.results = []
         self.start_time = time.time()
-        self._debug_log = [f"启动: input_dir={params.get('input_dir')}, model={params.get('ocr_model')}, python={params.get('ocr_python')}"]
+        self._debug_log = [f"启动: input_dir={params.get('input_dir')}, model={ocr_model}, python={OCR_PYTHON}"]
 
         thread = threading.Thread(target=self._run_ocr, args=(params,), daemon=True)
         thread.start()
@@ -82,7 +101,6 @@ class OCRManager:
             file_filter = params.get('file_filter', '*.png')
             batch_size = params.get('batch_size', 50)
             ocr_model = params.get('ocr_model', 'ch')
-            ocr_python = params.get('ocr_python', OCR_PYTHON)
 
             if not input_dir or not os.path.isdir(input_dir):
                 self.status = "error"
@@ -108,7 +126,7 @@ class OCRManager:
                     return
 
                 batch = files[i:i + batch_size]
-                batch_results = self._ocr_batch(batch, ocr_model, ocr_python)
+                batch_results = self._ocr_batch(batch, ocr_model)
                 self.results.extend(batch_results)
                 self.processed_files = min(i + batch_size, len(files))
 
@@ -118,18 +136,11 @@ class OCRManager:
             self.status = "error"
             self.error_message = str(e)
 
-    def _ocr_batch(self, img_paths, ocr_model='ch', ocr_python=None):
+    def _ocr_batch(self, img_paths, ocr_model='ch'):
         """批量OCR"""
-        if ocr_python is None:
-            ocr_python = OCR_PYTHON
+        if not isinstance(ocr_model, str) or ocr_model not in OCR_MODELS:
+            raise ValueError("不支持的OCR模型")
 
-        # 通过临时JSON文件传递路径，避免转义问题
-        data_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
-        json.dump({"img_paths": img_paths}, data_file, ensure_ascii=False)
-        data_file.close()
-        data_path = data_file.name
-
-        # 根据模型类型生成不同的初始化代码
         # PaddleOCR 2.x: handwriting/ch_server 都用 lang='ch'（PP-OCRv4）
         # lang 参数只支持: ch, en, korean, japan, chinese_cht 等
         lang_map = {
@@ -137,10 +148,16 @@ class OCRManager:
             'ch_server': 'ch',
         }
         actual_lang = lang_map.get(ocr_model, ocr_model)
-        ocr_init = f"ocr = PaddleOCR(lang='{actual_lang}', use_gpu=False, show_log=False)"
 
-        script = f'''
+        # 模型和路径都只作为JSON数据传递，脚本内容保持固定。
+        data_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8')
+        json.dump({"img_paths": img_paths, "ocr_model": actual_lang}, data_file, ensure_ascii=False)
+        data_file.close()
+        data_path = data_file.name
+
+        script = '''
 import os, sys, json
+sys.stdout.reconfigure(encoding='utf-8')
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
 
@@ -153,7 +170,7 @@ from paddleocr import PaddleOCR
 from PIL import Image
 import numpy as np
 
-{ocr_init}
+ocr = PaddleOCR(lang=data["ocr_model"], use_gpu=False, show_log=False)
 
 results = []
 for img_path in img_paths:
@@ -163,11 +180,11 @@ for img_path in img_paths:
         if result and result[0]:
             text = result[0][0][1][0]
             conf = result[0][0][1][1]
-            results.append({{"path": img_path, "text": text, "confidence": round(conf, 4)}})
+            results.append({"path": img_path, "text": text, "confidence": round(conf, 4)})
         else:
-            results.append({{"path": img_path, "text": "", "confidence": 0}})
+            results.append({"path": img_path, "text": "", "confidence": 0})
     except Exception as e:
-        results.append({{"path": img_path, "text": "", "confidence": 0, "error": str(e)}})
+        results.append({"path": img_path, "text": "", "confidence": 0, "error": str(e)})
 
 print("===RESULTS===")
 print(json.dumps(results, ensure_ascii=False))
@@ -178,8 +195,8 @@ print(json.dumps(results, ensure_ascii=False))
             temp_script = f.name
 
         try:
-            result = subprocess.run([ocr_python, temp_script, data_path],
-                                    capture_output=True, text=True, timeout=600)
+            result = subprocess.run([OCR_PYTHON, temp_script, data_path],
+                                    capture_output=True, text=True, encoding='utf-8', timeout=600)
             if "===RESULTS===" in result.stdout:
                 json_str = result.stdout.split("===RESULTS===")[1].strip()
                 parsed = json.loads(json_str)

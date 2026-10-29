@@ -8,7 +8,7 @@ import subprocess
 sys.stdout.reconfigure(encoding='utf-8')
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
-from config import HOST, PORT, DEBUG, ZI2ZI_DIR, DEFAULT_BASE_CHECKPOINT, DEFAULT_SOURCE_FONT, DEFAULT_REF_FONT, TRAIN_DEFAULTS, GENERATE_DEFAULTS
+from config import HOST, PORT, DEBUG, ZI2ZI_DIR, DEFAULT_BASE_CHECKPOINT, DEFAULT_SOURCE_FONT, DEFAULT_REF_FONT, TRAIN_DEFAULTS, GENERATE_DEFAULTS, OCR_PYTHON
 from utils.train_manager import train_manager
 from utils.generate_manager import generate_manager
 from utils.ocr_manager import ocr_manager
@@ -31,7 +31,7 @@ def generate_page():
 
 @app.route('/ocr')
 def ocr_page():
-    return render_template('ocr.html')
+    return render_template('ocr.html', ocr_python=OCR_PYTHON)
 
 
 # ===== 训练API =====
@@ -589,7 +589,7 @@ def delete_file():
 
 @app.route('/api/ocr/start', methods=['POST'])
 def ocr_start():
-    params = request.json
+    params = request.get_json(silent=True)
     result = ocr_manager.start_ocr(params)
     return jsonify(result)
 
@@ -615,13 +615,23 @@ def ocr_results():
 
 @app.route('/api/open_dir', methods=['POST'])
 def open_dir():
-    """打开目录或文件"""
-    path = request.json.get('path', '')
-    if not path:
-        return jsonify({"success": False, "error": "未指定路径"})
+    """打开目录或文件所在目录"""
+    params = request.get_json(silent=True)
+    if not isinstance(params, dict):
+        return jsonify({"success": False, "error": "请求必须是 JSON 对象"})
+    path = params.get('path', '')
+    if not isinstance(path, str) or not path.strip():
+        return jsonify({"success": False, "error": "未指定有效路径"})
+    if '"' in path or any(ord(char) < 32 for char in path):
+        return jsonify({"success": False, "error": "路径包含无效字符"})
     try:
+        path = os.path.abspath(os.path.expanduser(path))
+        if not os.path.exists(path):
+            return jsonify({"success": False, "error": "路径不存在"})
+        directory = path if os.path.isdir(path) else os.path.dirname(path)
         import subprocess, ctypes, time
-        subprocess.Popen(f'explorer "{path}"', shell=True)
+        explorer = os.path.join(os.environ.get('SystemRoot', r'C:\Windows'), 'explorer.exe')
+        subprocess.Popen([explorer, directory], shell=False)
         # 等待窗口出现后置前
         time.sleep(0.5)
         ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)  # Alt press

@@ -101,8 +101,7 @@
             <h4>OCR配置</h4>
             <div class="path-row">
                 <label>OCR环境</label>
-                <input type="text" id="ocrPython" data-persist value="D:\Claudecode\paddle-ocr\venv\Scripts\python.exe">
-                <button class="btn-browse" onclick="browseFile('ocrPython',['.exe'])">浏览</button>
+                <input type="text" id="ocrPython" readonly value="{{ ocr_python }}">
             </div>
             <div class="path-row">
                 <label>输入目录</label>
